@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html class="no-js">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        <title></title>
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, user-scalable=no">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+
+        <link rel="stylesheet" href="css/normalize.css">
+        <link rel="stylesheet" href="css/main.css">
+        <link rel="stylesheet" href="css/popup.css">
+
+        <script src="js/libs/jquery.min.js"></script>
+
+        <script src="js/libs/zip.min.js"></script>
+
+<script>
+"use strict";
+
+document.onreadystatechange = function () {
+    if (document.readyState === "complete") {
+        var originalRender = ePubReader;
+        ePubReader = function(url, options) {
+            var reader = originalRender(url, options);
+            
+            if (reader && reader.book && reader.rendition) {
+                var syncProgress = function(location) {
+                    if (!location || !location.start || !reader.book || !reader.book.locations) {
+                        return;
+                    }
+
+                    var totalLocations = reader.book.locations.length();
+                    if (!totalLocations) {
+                        return;
+                    }
+
+                    var progressSlider = document.getElementById('progress-slider');
+                    var progressPercent = document.getElementById('progress-percent');
+                    var currentProgress = reader.book.locations.percentageFromCfi(location.start.cfi);
+                    var progressValue = Math.round((currentProgress || 0) * 100);
+                    var locationIndex = reader.book.locations.locationFromCfi(location.start.cfi);
+
+                    if (progressSlider) {
+                        var maxIndex = Math.max(totalLocations - 1, 0);
+                        progressSlider.max = maxIndex;
+
+                        if (typeof locationIndex === "number" && !isNaN(locationIndex)) {
+                            progressSlider.value = Math.min(Math.max(locationIndex, 0), maxIndex);
+                        } else {
+                            progressSlider.value = Math.round((progressValue / 100) * maxIndex);
+                        }
+                    }
+
+                    if (progressPercent) {
+                        progressPercent.textContent = progressValue + '%';
+                    }
+                };
+
+                reader.book.ready
+                    .then(function() {
+                        return reader.book.locations.generate(1000);
+                    })
+                    .then(function() {
+                        if (reader.rendition && reader.rendition.currentLocation) {
+                            syncProgress(reader.rendition.currentLocation());
+                        }
+                    });
+
+                reader.rendition.on('relocated', function(location) {
+                    syncProgress(location);
+
+                    // Reapply reader styles because EPUB content can refresh between relocations
+                    setTimeout(function() {
+                        updateReadingSettings();
+                    }, 30);
+
+                    // Try to apply highlights for the new location
+                    setTimeout(function() {
+                        applyStoredHighlights();
+                    }, 500);
+                });
+                
+                // Also apply highlights on resize (debounced)
+                var resizeTimeout;
+                window.addEventListener('resize', function() {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(function() {
+                        applyStoredHighlights();
+                    }, 600);
+                });
+            }
+            
+            return reader;
+        };
+
+        window.reader = ePubReader("matices-de-la-seguridad-en-ninos-para-prevenir-lesiones-no-intencionales.epub", {
+            restore: true
+        });
+    }
+};
+
+var readingSettings = {
+    fontSize: 100,
+    fontFamily: 'Georgia, serif',
+    theme: 'light'
+};
+
+// DOM element cache
+var domCache = {};
+
+function getElement(id) {
+    if (!domCache[id]) {
+        domCache[id] = document.getElementById(id);
+    }
+    return domCache[id];
+}
+
+function getThemePalette(theme) {
+    if (theme === 'dark') {
+        return {
+            background: '#121212',
+            text: '#e6e6e6',
+            link: '#8ab4ff'
+        };
+    }
+
+    if (theme === 'sepia') {
+        return {
+            background: '#f4ecd8',
+            text: '#4f3e2f',
+            link: '#6b4f2a'
+        };
+    }
+
+    return {
+        background: '#ffffff',
+        text: '#1f2937',
+        link: '#1d4ed8'
+    };
+}
+
+function applyThemeToIframe(doc, theme) {
+    if (!doc) return;
+
+    var palette = getThemePalette(theme);
+    var styleId = 'reading-theme-override';
+    var styleEl = doc.getElementById(styleId);
+
+    if (!styleEl) {
+        styleEl = doc.createElement('style');
+        styleEl.id = styleId;
+        (doc.head || doc.documentElement).appendChild(styleEl);
+    }
+
+    styleEl.textContent =
+        'html, body { background: ' + palette.background + ' !important; color: ' + palette.text + ' !important; }' +
+        'body, p, div, span, li, blockquote, td, th, h1, h2, h3, h4, h5, h6 { color: ' + palette.text + ' !important; }' +
+        'a, a:link, a:visited { color: ' + palette.link + ' !important; }';
+}
+
+function updateReadingSettings() {
+    var viewer = getElement('viewer');
+    if (viewer) {
+        var iframe = viewer.querySelector('iframe');
+        if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+            var doc = iframe.contentDocument;
+            var body = doc.body;
+            body.style.fontSize = readingSettings.fontSize + '%';
+            body.style.fontFamily = readingSettings.fontFamily;
+            applyThemeToIframe(doc, readingSettings.theme);
+        }
+    }
+    
+    var fontSizeEl = getElement('font-size-value');
+    var fontFamilyEl = getElement('font-family');
+    if (fontSizeEl) fontSizeEl.textContent = readingSettings.fontSize + '%';
+    if (fontFamilyEl) fontFamilyEl.value = readingSettings.fontFamily;
+    
+    document.body.classList.remove('theme-light', 'theme-sepia', 'theme-dark');
+    document.body.classList.add('theme-' + readingSettings.theme);
+    
+    localStorage.setItem('readingSettings', JSON.stringify(readingSettings));
+}
+
+function applyTheme(theme) {
+    readingSettings.theme = theme;
+    updateReadingSettings();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    try {
+        var savedSettings = localStorage.getItem('readingSettings');
+        if (savedSettings) {
+            readingSettings = JSON.parse(savedSettings);
+        }
+        updateReadingSettings();
+    } catch(e) {
+        console.error('Error loading settings:', e);
+    }
+    
+    // Close modals
+    var closeModals = function() {
+        var settingsModal = getElement('settings-modal');
+        var readingSettingsModal = getElement('reading-settings-modal');
+        var overlay = document.querySelector('.overlay');
+        if (settingsModal) settingsModal.classList.remove('md-show');
+        if (readingSettingsModal) readingSettingsModal.classList.remove('md-show');
+        if (overlay) overlay.classList.remove('md-show');
+    };
+    
+    document.querySelectorAll('.closer').forEach(function(btn) {
+        btn.addEventListener('click', closeModals);
+    });
+    
+    var settingBtn = getElement('setting');
+    if (settingBtn) {
+        settingBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            var readingSettingsModal = getElement('reading-settings-modal');
+            var settingsModal = getElement('settings-modal');
+            var overlay = document.querySelector('.overlay');
+            if (settingsModal) settingsModal.classList.remove('md-show');
+            if (readingSettingsModal) readingSettingsModal.classList.add('md-show');
+            if (overlay) overlay.classList.add('md-show');
+        }, true);
+    }
+    
+    var fontIncreaseBtn = getElement('font-increase');
+    if (fontIncreaseBtn) {
+        fontIncreaseBtn.addEventListener('click', function() {
+            if (readingSettings.fontSize < 200) {
+                readingSettings.fontSize += 10;
+                updateReadingSettings();
+            }
+        });
+    }
+    
+    var fontDecreaseBtn = getElement('font-decrease');
+    if (fontDecreaseBtn) {
+        fontDecreaseBtn.addEventListener('click', function() {
+            if (readingSettings.fontSize > 50) {
+                readingSettings.fontSize -= 10;
+                updateReadingSettings();
+            }
+        });
+    }
+    
+    var fontFamilySelect = getElement('font-family');
+    if (fontFamilySelect) {
+        fontFamilySelect.addEventListener('change', function(e) {
+            readingSettings.fontFamily = e.target.value;
+            updateReadingSettings();
+        });
+    }
+    
+    document.querySelectorAll('.theme-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.theme-btn').forEach(function(b) {
+                b.classList.remove('active');
+            });
+            this.classList.add('active');
+            applyTheme(this.getAttribute('data-theme'));
+        });
+    });
+
+    var activeThemeBtn = document.querySelector('.theme-btn[data-theme="' + readingSettings.theme + '"]');
+    if (activeThemeBtn) {
+        document.querySelectorAll('.theme-btn').forEach(function(btn) {
+            btn.classList.remove('active');
+        });
+        activeThemeBtn.classList.add('active');
+    }
+    
+    var progressSlider = getElement('progress-slider');
+    if (progressSlider) {
+        var navigateFromSlider = function(value) {
+            if (!window.reader || !window.reader.book || !window.reader.book.locations || !window.reader.rendition) {
+                return;
+            }
+
+            var locations = window.reader.book.locations;
+            var total = locations.length();
+            if (!total) {
+                return;
+            }
+
+            var locationIndex = parseInt(value, 10);
+            if (isNaN(locationIndex)) {
+                return;
+            }
+
+            var maxIndex = Math.max(total - 1, 0);
+            locationIndex = Math.min(Math.max(locationIndex, 0), maxIndex);
+
+            var targetCfi = locations.cfiFromLocation(locationIndex);
+
+            if (!targetCfi && maxIndex > 0) {
+                targetCfi = locations.cfiFromPercentage(locationIndex / maxIndex);
+            }
+
+            if (targetCfi) {
+                window.reader.rendition.display(targetCfi);
+            }
+        };
+
+        progressSlider.addEventListener('input', function(e) {
+            navigateFromSlider(e.target.value);
+        });
+
+        progressSlider.addEventListener('change', function(e) {
+            navigateFromSlider(e.target.value);
+        });
+    }
+});
+
+var highlightsData = {};
+var currentBookHighlights = [];
+
+var defaultBookKey = "Matices de la seguridad en niños para prevenir lesiones no intencionales";
+
+function getBookKey() {
+    var bookTitle = getElement('book-title');
+    var key = bookTitle ? bookTitle.textContent : null;
+    return key || defaultBookKey;
+}
+
+function loadHighlights() {
+    try {
+        var stored = localStorage.getItem('highlights');
+        if (stored) {
+            highlightsData = JSON.parse(stored);
+        }
+        var key = getBookKey();
+        currentBookHighlights = highlightsData[key] || [];
+    } catch(e) {
+        console.error('Error loading highlights:', e);
+        highlightsData = {};
+        currentBookHighlights = [];
+    }
+}
+
+function saveHighlights() {
+    try {
+        var key = getBookKey();
+        highlightsData[key] = currentBookHighlights;
+        localStorage.setItem('highlights', JSON.stringify(highlightsData));
+    } catch(e) {
+        console.error('Error saving highlights:', e);
+    }
+}
+
+function renderHighlightsList() {
+    var list = getElement('highlights-list');
+    if (!list) return;
+    list.innerHTML = '';
+    
+    currentBookHighlights.forEach(function(hl, index) {
+        var li = document.createElement('li');
+        li.className = 'highlight-item highlight-color-' + hl.color;
+        li.innerHTML = 
+            '<div class="highlight-text">' + hl.text + '</div>' +
+            '<div class="highlight-actions">' +
+                '<button class="delete-highlight" data-index="' + index + '">Eliminar</button>' +
+            '</div>';
+        
+        li.querySelector('.delete-highlight').addEventListener('click', function(e) {
+            e.stopPropagation();
+            currentBookHighlights.splice(index, 1);
+            saveHighlights();
+            renderHighlightsList();
+        });
+        
+        li.addEventListener('click', function() {
+            if (window.reader && window.reader.rendition && hl.cfi) {
+                window.reader.rendition.display(hl.cfi);
+            }
+        });
+        
+        list.appendChild(li);
+    });
+}
+
+function applyHighlightVisual(cfi, color) {
+    if (!window.reader || !window.reader.rendition || !window.reader.rendition.annotations) {
+        return;
+    }
+    
+    var annotations = window.reader.rendition.annotations;
+    var hash = encodeURI(cfi);
+    
+    if (annotations._annotations && annotations._annotations[hash]) {
+        delete annotations._annotations[hash];
+    }
+    
+    var data = { color: color };
+    
+    try {
+        window.reader.rendition.annotations.highlight(cfi, data);
+        setTimeout(function() {
+            applyCustomColor(cfi, color);
+        }, 100);
+    } catch(e) {
+        console.error('Error creating highlight:', e);
+    }
+}
+
+function applyCustomColor(cfi, color) {
+    var colorMap = {
+        'yellow': '#fff59d',
+        'green': '#c8e6c9',
+        'blue': '#bbdefb',
+        'pink': '#f8bbd0'
+    };
+    var bgColor = colorMap[color] || colorMap.yellow;
+    
+    if (!window.reader || !window.reader.rendition || !window.reader.rendition.annotations) {
+        return;
+    }
+    
+    var annotations = window.reader.rendition.annotations;
+    var hash = encodeURI(cfi);
+    
+    if (annotations._annotations && annotations._annotations[hash]) {
+        var ann = annotations._annotations[hash];
+        if (ann.mark && ann.mark.element) {
+            var el = ann.mark.element;
+            el.style.fill = bgColor;
+            el.style.fillOpacity = '0.5';
+            
+            var children = el.querySelectorAll('rect, path');
+            children.forEach(function(child) {
+                child.style.fill = bgColor;
+                child.style.fillOpacity = '0.5';
+            });
+        }
+    }
+}
+
+function getHighlightColor(colorName) {
+    var colors = {
+        'yellow': '#fff59d',
+        'green': '#c8e6c9',
+        'blue': '#bbdefb',
+        'pink': '#f8bbd0'
+    };
+    return colors[colorName] || colors['yellow'];
+}
+
+function applyStoredHighlights() {
+    if (!window.reader || !window.reader.rendition) {
+        return;
+    }
+    
+    var currentLocation = window.reader.rendition.location;
+    if (!currentLocation || !currentLocation.start) {
+        return;
+    }
+    
+    var currentIndex = currentLocation.start.index;
+    
+    var sectionHighlights = [];
+    currentBookHighlights.forEach(function(hl) {
+        try {
+            var internalCfi = hl.cfi.replace('epubcfi(', '').replace(')', '');
+            var parts = internalCfi.split('!');
+            if (parts.length >= 2) {
+                var sectionPart = parts[0];
+                var spinePos = parseInt(sectionPart.split('/')[1], 10);
+                if (spinePos === currentIndex) {
+                    sectionHighlights.push(hl);
+                }
+            }
+        } catch(e) {
+            console.error('Error parsing highlight CFI:', e);
+        }
+    });
+    
+    if (sectionHighlights.length > 0) {
+        sectionHighlights.forEach(function(hl) {
+            applyHighlightVisual(hl.cfi, hl.color);
+        });
+    }
+}
+
+function tryApplyHighlightDOM(doc, cfi, color) {
+    // Method not implemented
+}
+
+function addHighlight(cfi, text, color) {
+    currentBookHighlights.push({
+        cfi: cfi,
+        text: text.substring(0, 200),
+        color: color || 'yellow',
+        date: new Date().toISOString()
+    });
+    saveHighlights();
+    renderHighlightsList();
+    applyHighlightVisual(cfi, color);
+}
+
+function setupHighlightListener() {
+    function hideHighlightActions() {
+        var actionDiv = getElement('highlight-actions');
+        if (!actionDiv) return;
+        actionDiv.style.display = 'none';
+        actionDiv.innerHTML = '<p style="color: #666; font-size: 12px;">Selecciona texto para subrayar</p>';
+    }
+
+    function bindSelectionHandler(iframeWin) {
+        if (!iframeWin || iframeWin.__highlightListenerBound) {
+            return;
+        }
+
+        iframeWin.__highlightListenerBound = true;
+
+        iframeWin.addEventListener('mouseup', function() {
+            setTimeout(function() {
+                var selection = iframeWin.getSelection();
+                var selectedText = selection.toString().trim();
+
+                if (selectedText.length === 0) {
+                    hideHighlightActions();
+                    return;
+                }
+
+                if (selectedText.length > 0 && window.reader && window.reader.book) {
+                    var range = selection.getRangeAt(0);
+                    var cfi = null;
+
+                    try {
+                        var contents = window.reader && window.reader.rendition ? window.reader.rendition.contents : null;
+                        var cfiBase = '';
+
+                        if (window.reader && window.reader.book && window.reader.book.spine) {
+                            var location = window.reader.rendition.location;
+                            if (location && location.start) {
+                                var currentSection = window.reader.book.spine.get(location.start.index);
+                                if (currentSection && currentSection.cfiBase) {
+                                    cfiBase = currentSection.cfiBase;
+                                }
+                            }
+                        }
+
+                        if (contents && contents.epubcfi && contents.epubcfi.cfiFromRange) {
+                            cfi = contents.epubcfi.cfiFromRange(range);
+                            if (cfi && cfiBase && !cfi.startsWith('epubcfi(/!')) {
+                                cfi = 'epubcfi(' + cfiBase + cfi + ')';
+                            }
+                        } else if (window.ePub && window.ePub.CFI) {
+                            var cfiObj = new window.ePub.CFI(range, cfiBase);
+                            cfi = cfiObj.toString();
+                        }
+                    } catch(err) {
+                        console.error('Error generating CFI:', err);
+                    }
+
+                    if (cfi) {
+                        var actionDiv = getElement('highlight-actions');
+                        if (!actionDiv) return;
+
+                        actionDiv.style.display = 'block';
+                        actionDiv.style.visibility = 'visible';
+                        actionDiv.style.opacity = '1';
+                        actionDiv.style.position = 'relative';
+                        actionDiv.style.zIndex = '1000';
+
+                        var parentView = actionDiv.closest('.view');
+                        if (parentView) {
+                            parentView.style.display = 'block';
+                            parentView.style.visibility = 'visible';
+                        }
+
+                        actionDiv.innerHTML =
+                            '<div style="background: #fff9c4; padding: 10px; border-radius: 4px; text-align: center;">' +
+                            '<p style="margin: 0 0 8px 0; color: #333;">"' + selectedText.substring(0, 50) + '..."</p>' +
+                            '<div style="display: flex; gap: 10px; justify-content: center;">' +
+                            '<button class="hl-btn" data-color="yellow" data-cfi="' + cfi + '" data-text="' + encodeURIComponent(selectedText) + '" style="background:#fff59d; border:1px solid #ffd54f; width:30px; height:30px; border-radius:50%; cursor:pointer;" title="Amarillo"></button>' +
+                            '<button class="hl-btn" data-color="green" data-cfi="' + cfi + '" data-text="' + encodeURIComponent(selectedText) + '" style="background:#c8e6c9; border:1px solid #81c784; width:30px; height:30px; border-radius:50%; cursor:pointer;" title="Verde"></button>' +
+                            '<button class="hl-btn" data-color="blue" data-cfi="' + cfi + '" data-text="' + encodeURIComponent(selectedText) + '" style="background:#bbdefb; border:1px solid #64b5f6; width:30px; height:30px; border-radius:50%; cursor:pointer;" title="Azul"></button>' +
+                            '<button class="hl-btn" data-color="pink" data-cfi="' + cfi + '" data-text="' + encodeURIComponent(selectedText) + '" style="background:#f8bbd0; border:1px solid #f48fb1; width:30px; height:30px; border-radius:50%; cursor:pointer;" title="Rosa"></button>' +
+                            '</div>' +
+                            '</div>';
+
+                        actionDiv.querySelectorAll('.hl-btn').forEach(function(btn) {
+                            btn.addEventListener('click', function() {
+                                addHighlight(
+                                    this.getAttribute('data-cfi'),
+                                    decodeURIComponent(this.getAttribute('data-text')),
+                                    this.getAttribute('data-color')
+                                );
+                                actionDiv.style.display = 'none';
+                                var activeSelection = iframeWin.getSelection ? iframeWin.getSelection() : window.getSelection();
+                                if (activeSelection && activeSelection.removeAllRanges) {
+                                    activeSelection.removeAllRanges();
+                                }
+                                hideHighlightActions();
+                            });
+                        });
+                    }
+                }
+            }, 100);
+        });
+    }
+
+    function trySetup() {
+        var viewer = getElement('viewer');
+        if (!viewer) {
+            setTimeout(trySetup, 500);
+            return;
+        }
+        
+        var iframe = viewer.querySelector('iframe');
+        if (!iframe) {
+            setTimeout(trySetup, 500);
+            return;
+        }
+        
+        var iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+        if (!iframeDoc) {
+            setTimeout(trySetup, 500);
+            return;
+        }
+
+        bindSelectionHandler(iframe.contentWindow);
+
+        if (!window.__highlightOutsideClickBound) {
+            window.__highlightOutsideClickBound = true;
+            document.addEventListener('click', function(e) {
+                var actionDiv = getElement('highlight-actions');
+                if (!actionDiv || actionDiv.style.display === 'none') {
+                    return;
+                }
+                if (!actionDiv.contains(e.target)) {
+                    hideHighlightActions();
+                }
+            });
+        }
+
+        if (window.reader && window.reader.rendition && !window.reader.__highlightRenderedHookBound) {
+            window.reader.__highlightRenderedHookBound = true;
+            window.reader.rendition.on('rendered', function() {
+                hideHighlightActions();
+                setTimeout(trySetup, 50);
+            });
+        }
+    }
+    
+    trySetup();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadHighlights();
+    renderHighlightsList();
+    setupHighlightListener();
+    
+    function loadStoredHighlights() {
+        if (window.reader && window.reader.book) {
+            window.reader.book.ready.then(function() {
+                currentBookHighlights.forEach(function(hl) {
+                    applyHighlightVisual(hl.cfi, hl.color);
+                });
+            });
+        } else {
+            setTimeout(loadStoredHighlights, 1000);
+        }
+    }
+    setTimeout(loadStoredHighlights, 2000);
+    
+    var showHighlightsBtn = getElement('show-Highlights');
+    if (showHighlightsBtn) {
+        showHighlightsBtn.addEventListener('click', function() {
+            document.querySelectorAll('.show_view').forEach(function(el) {
+                el.classList.remove('active');
+            });
+            this.classList.add('active');
+            
+            document.querySelectorAll('.view').forEach(function(view) {
+                view.style.display = 'none';
+            });
+            
+            var highlightsView = getElement('highlightsView');
+            if (highlightsView) {
+                highlightsView.style.display = 'block';
+                highlightsView.style.visibility = 'visible';
+            }
+        });
+    }
+});
+</script>
+
+        <!-- File Storage -->
+        <!-- <script src="js/libs/localforage.min.js"></script> -->
+
+        <!-- Full Screen -->
+        <script src="js/libs/screenfull.min.js"></script>
+
+        <!-- Render -->
+        <script src="js/epub.js"></script>
+
+        <!-- Reader -->
+        <script src="js/reader.js"></script>
+
+        <!-- Plugins -->
+        <!-- <script src="js/plugins/search.js"></script> -->
+
+        <!-- Highlights -->
+        <!-- <script src="js/libs/jquery.highlight.js"></script> -->
+        <!-- <script src="js/hooks/extensions/highlight.js"></script> -->
+
+    </head>
+    <body>
+      <div id="sidebar">
+        <div id="panels">
+          <!-- <input id="searchBox" placeholder="search" type="search"> -->
+
+          <!-- <a id="show-Search" class="show_view icon-search" data-view="Search">Search</a> -->
+          <a id="show-Toc" class="show_view icon-list-1 active" data-view="Toc">TOC</a>
+          <a id="show-Bookmarks" class="show_view icon-bookmark" data-view="Bookmarks">Bookmarks</a>
+          <a id="show-Highlights" class="show_view icon-edit" data-view="Highlights">Highlights</a>
+          <!-- <a id="show-Notes" class="show_view icon-edit" data-view="Notes">Notes</a> -->
+
+        </div>
+        <div id="tocView" class="view">
+        </div>
+        <div id="searchView" class="view">
+          <ul id="searchResults"></ul>
+        </div>
+        <div id="bookmarksView" class="view">
+          <ul id="bookmarks"></ul>
+        </div>
+        <div id="notesView" class="view">
+          <div id="new-note">
+            <textarea id="note-text"></textarea>
+            <button id="note-anchor">Anchor</button>
+          </div>
+          <ol id="notes"></ol>
+        </div>
+        <div id="highlightsView" class="view">
+          <div id="highlight-actions" style="padding: 10px; display: none;">
+              <p style="color: #666; font-size: 12px;">Selecciona texto para subrayar</p>
+          </div>
+          <ul id="highlights-list"></ul>
+        </div>
+      </div>
+      <div id="main">
+
+        <div id="titlebar">
+          <div id="opener">
+            <a id="slider" class="icon-menu">Menu</a>
+          </div>
+          <div id="metainfo">
+            <span id="book-title"></span>
+            <span id="title-seperator">&nbsp;&nbsp;–&nbsp;&nbsp;</span>
+            <span id="chapter-title"></span>
+          </div>
+          <div id="title-controls">
+            <a id="bookmark" class="icon-bookmark-empty">Bookmark</a>
+            <a id="setting" class="icon-cog">Settings</a>
+            <a id="fullscreen" class="icon-resize-full">Fullscreen</a>
+          </div>
+        </div>
+
+        <div id="divider"></div>
+        <div id="prev" class="arrow">‹</div>
+        <div id="viewer"></div>
+        <div id="next" class="arrow">›</div>
+
+        <div id="loader"><img src="img/loader.gif"></div>
+      </div>
+      <div class="modal md-effect-1" id="settings-modal">
+          <div class="md-content">
+              <h3>Settings</h3>
+              <div>
+                  <p>
+                    <input type="checkbox" id="sidebarReflow" name="sidebarReflow">Reflow text when sidebars are open.
+                  </p>
+              </div>
+              <div class="closer icon-cancel-circled"></div>
+          </div>
+      </div>
+      
+      <div class="modal md-effect-1" id="reading-settings-modal">
+          <div class="md-content reading-settings-content">
+              <h3>Ajustes de Lectura</h3>
+              <div class="reading-settings-body">
+                  <div class="setting-group">
+                      <label>Tamaño de fuente</label>
+                      <div class="font-size-controls">
+                          <button id="font-decrease" type="button" aria-label="Disminuir tamaño">A-</button>
+                          <span id="font-size-value">100%</span>
+                          <button id="font-increase" type="button" aria-label="Aumentar tamaño">A+</button>
+                      </div>
+                  </div>
+                  <div class="setting-group">
+                      <label>Tipo de fuente</label>
+                      <select id="font-family">
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="Arial, sans-serif">Arial</option>
+                          <option value="Times New Roman, serif">Times New Roman</option>
+                          <option value="Verdana, sans-serif">Verdana</option>
+                          <option value="Helvetica, sans-serif">Helvetica</option>
+                      </select>
+                  </div>
+                  <div class="setting-group">
+                      <label>Tema</label>
+                      <div class="theme-options">
+                          <button class="theme-btn theme-light" type="button" data-theme="light">Claro</button>
+                          <button class="theme-btn theme-sepia" type="button" data-theme="sepia">Sepia</button>
+                          <button class="theme-btn theme-dark" type="button" data-theme="dark">Oscuro</button>
+                      </div>
+                  </div>
+              </div>
+              <div class="closer icon-cancel-circled"></div>
+          </div>
+      </div>
+
+      <div id="progress-bar-container">
+          <div id="progress-info">
+              <span id="progress-percent">0%</span>
+          </div>
+          <input type="range" id="progress-slider" min="0" max="100" value="0">
+      </div>
+
+      <div class="overlay"></div>
+    </body>
+</html>
