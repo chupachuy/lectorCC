@@ -4514,13 +4514,11 @@ EPUBJS.reader.SidebarController = function (book) {
 
   var show = function () {
     reader.sidebarOpen = true;
-    reader.ReaderController.slideOut();
     $sidebar.addClass("open");
   };
 
   var hide = function () {
     reader.sidebarOpen = false;
-    reader.ReaderController.slideIn();
     $sidebar.removeClass("open");
   };
 
@@ -4528,6 +4526,11 @@ EPUBJS.reader.SidebarController = function (book) {
     var view = $(this).data("view");
 
     changePanelTo(view);
+    event.preventDefault();
+  });
+
+  $("#close-sidebar").on("click", function (event) {
+    hide();
     event.preventDefault();
   });
 
