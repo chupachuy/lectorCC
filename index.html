@@ -208,7 +208,7 @@ function applyThemeToIframe(doc, theme) {
     }
 
     styleEl.textContent =
-        'html, body { background: ' + palette.background + ' !important; color: ' + palette.text + ' !important; }' +
+           'html, body { background: ' + palette.background + ' !important; color: ' + palette.text + ' !important; margin: 0 !important; padding-left: 0 !important; padding-right: 0 !important; }' +
         'body, p, div, span, li, blockquote, td, th, h1, h2, h3, h4, h5, h6 { color: ' + palette.text + ' !important; }' +
         'a, a:link, a:visited { color: ' + palette.link + ' !important; max-width: 100% !important; word-break: break-word !important; overflow-wrap: break-word !important; display: inline-block; }' +
         'p, span, div, li, td, th { max-width: 100% !important; word-break: break-word !important; overflow-wrap: break-word !important; }';
@@ -223,6 +223,9 @@ function updateReadingSettings() {
             var body = doc.body;
             body.style.fontSize = readingSettings.fontSize + '%';
             body.style.fontFamily = readingSettings.fontFamily;
+            body.style.margin = '0';
+            body.style.paddingLeft = '0';
+            body.style.paddingRight = '0';
             applyThemeToIframe(doc, readingSettings.theme);
         }
     }
