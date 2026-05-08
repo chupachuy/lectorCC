@@ -3933,7 +3933,6 @@ EPUBJS.reader.ControlsController = function (book) {
       reader.SidebarController.hide();
       $slider.addClass("icon-menu");
       $slider.removeClass("icon-right");
-    } else {
       reader.SidebarController.show();
       $slider.addClass("icon-right");
       $slider.removeClass("icon-menu");
@@ -4531,6 +4530,8 @@ EPUBJS.reader.SidebarController = function (book) {
 
   $("#close-sidebar").on("click", function (event) {
     hide();
+    $("#slider").addClass("icon-menu");
+    $("#slider").removeClass("icon-right");
     event.preventDefault();
   });
 
